@@ -1,0 +1,37 @@
+name: Build AML Mod
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+
+      - name: Build
+        run: |
+          $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang++ \
+            -std=c++17 \
+            -shared \
+            -fPIC \
+            -O2 \
+            -DNDEBUG \
+            -I. \
+            -o libMyFirstMod.so \
+            main.cpp \
+            mod/logger.cpp \
+            mod/config.cpp \
+            -llog
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: libMyFirstMod
+          path: libMyFirstMod.so
