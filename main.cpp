@@ -2,7 +2,8 @@
 #include <mod/logger.h>
 
 MYMOD(com.burhan.myfirstmod, MyFirstMod, 1.0, Burhan)
-
+static Logger loggerLocal;
+Logger* logger = &loggerLocal;
 ON_MOD_LOAD()
 {
     logger->SetTag("MyFirstMod");
