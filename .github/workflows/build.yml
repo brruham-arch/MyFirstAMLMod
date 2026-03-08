@@ -17,14 +17,16 @@ jobs:
 
       - name: Build
         run: |
-          $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang++ \
+          $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang++ \
             -std=c++17 \
             -shared \
             -fPIC \
             -O2 \
             -DNDEBUG \
             -I. \
+            -s \
             -o libMyFirstMod.so \
+            main.cpp mod/config.cpp \
             -llog \
             -static-libstdc++
 
