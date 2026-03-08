@@ -6,6 +6,7 @@ static Logger loggerLocal;
 Logger* logger = &loggerLocal;
 ON_MOD_LOAD()
 {
+aml->ShowToast(true, "MyFirstMod loaded!");
     logger->SetTag("MyFirstMod");
     logger->Info("=== MyFirstMod berhasil di-load! ===");
 
