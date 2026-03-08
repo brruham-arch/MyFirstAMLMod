@@ -1,28 +1,34 @@
-#include <mod/amlmod.h>
-#include <mod/logger.h>
+#include <jni.h>
 #include <android/log.h>
 #include <stdio.h>
 
-MYMOD(com.burhan.myfirstmod, MyFirstMod, 1.0, Burhan)
+struct ModInfo {
+    char szGUID[48];
+    char szName[48];
+    char szVersion[24];
+    char szAuthor[48];
+};
 
-static Logger loggerLocal;
-Logger* logger = &loggerLocal;
+static ModInfo g_modinfo = {
+    "com.burhan.myfirstmod",
+    "MyFirstMod",
+    "1.0",
+    "Burhan"
+};
 
-__attribute__((constructor))
-static void onDlOpen()
-{
-    __android_log_print(ANDROID_LOG_ERROR, "MYFIRSTMOD", "=== CONSTRUCTOR FIRED ===");
-    // Tulis ke internal app data (pasti bisa ditulis)
-    FILE* f = fopen("/data/data/com.sampmobilerp.game/modtest.txt", "w");
-    if(f) { fprintf(f, "constructor OK\n"); fclose(f); }
+extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
+    return &g_modinfo;
 }
 
-ON_MOD_PRELOAD()
-{
+extern "C" __attribute__((visibility("default"))) void OnModPreLoad() {
     __android_log_print(ANDROID_LOG_ERROR, "MYFIRSTMOD", "=== PRELOAD ===");
 }
 
-ON_MOD_LOAD()
-{
+extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     __android_log_print(ANDROID_LOG_ERROR, "MYFIRSTMOD", "=== LOAD ===");
+}
+
+__attribute__((constructor))
+static void onDlOpen() {
+    __android_log_print(ANDROID_LOG_ERROR, "MYFIRSTMOD", "=== CONSTRUCTOR ===");
 }
