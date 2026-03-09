@@ -4,8 +4,12 @@
 #include <dlfcn.h>
 #include <sys/socket.h>
 #include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <stdio.h>
 
 #define LOG(fmt, ...) __android_log_print(ANDROID_LOG_INFO, "MyFirstMod", fmt, ##__VA_ARGS__)
+#define TOGGLE_FILE "/storage/emulated/0/Download/sb_toggle"
 
 static ModInfo g_modinfo("com.burhan.myfirstmod", "SyncBlocker", "1.0", "Burhan");
 ModInfo* modinfo = &g_modinfo;
@@ -49,34 +53,30 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
     return result;
 }
 
-typedef ssize_t (*sendto_t)(int,const void*,size_t,int,
-                            const struct sockaddr*,socklen_t);
-sendto_t origSendto = nullptr;
-
-ssize_t HookedSendto(int sockfd, const void* buf, size_t len,
-                     int flags, const struct sockaddr* addr, socklen_t addrlen)
+// Thread yang cek file toggle setiap 2 detik
+void* toggleThread(void*)
 {
-    if(buf && len >= 4)
+    bool lastState = false;
+    while(true)
     {
-        const unsigned char* data = (const unsigned char*)buf;
-        // Scan seluruh packet cari keyword #sbc
-        for(int i = 0; i < (int)len - 3; i++)
+        sleep(2);
+        // Cek apakah file sb_toggle ada
+        FILE* f = fopen(TOGGLE_FILE, "r");
+        bool fileExists = (f != nullptr);
+        if(f) fclose(f);
+
+        if(fileExists != lastState)
         {
-            if(data[i]   == '#' && data[i+1] == 's' &&
-               data[i+2] == 'b' && data[i+3] == 'c')
-            {
-                g_enabled = !g_enabled;
-                g_blocked = 0;
-                g_passed  = 0;
-                LOG("SyncBlocker toggle: %s", g_enabled ? "ON" : "OFF");
-                aml->ShowToast(true, "SyncBlocker: %s",
-                    g_enabled ? "ON" : "OFF");
-                // Block packet agar tidak dikirim ke server
-                return len;
-            }
+            lastState = fileExists;
+            g_enabled = fileExists;
+            g_blocked = 0;
+            g_passed  = 0;
+            LOG("SyncBlocker: %s", g_enabled ? "ON" : "OFF");
+            if(aml) aml->ShowToast(true, "SyncBlocker: %s",
+                g_enabled ? "ON" : "OFF");
         }
     }
-    return origSendto(sockfd, buf, len, flags, addr, addrlen);
+    return nullptr;
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -91,12 +91,11 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
         LOG("recvfrom hooked!");
     }
 
-    void* fnSend = dlsym(RTLD_DEFAULT, "sendto");
-    if(fnSend) {
-        aml->Hook(fnSend, (void*)HookedSendto, (void**)&origSendto);
-        LOG("sendto hooked!");
-    }
+    // Start toggle thread
+    pthread_t tid;
+    pthread_create(&tid, nullptr, toggleThread, nullptr);
+    pthread_detach(tid);
 
-    aml->ShowToast(true, "SyncBlocker siap!\nKetik #sbc di chat untuk toggle");
-    LOG("SyncBlocker ready!");
+    aml->ShowToast(true, "SyncBlocker siap!\nBuat file sb_toggle di Download untuk ON");
+    LOG("SyncBlocker ready! File trigger: %s", TOGGLE_FILE);
 }
