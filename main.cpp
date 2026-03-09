@@ -18,8 +18,7 @@ IAML* aml = nullptr;
 static bool g_enabled    = false;
 static int  g_blocked    = 0;
 static int  g_passed     = 0;
-// Flag untuk toast - dibaca dari main thread (recvfrom)
-static int  g_toastPending = 0; // 1=ON, 2=OFF, 0=none
+static int  g_toastPending = 0;
 
 bool isSyncPacket(unsigned char id) {
     return id == 203 || id == 207 || id == 208 ||
@@ -34,9 +33,8 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
 {
     ssize_t result = origRecvfrom(sockfd, buf, len, flags, addr, addrlen);
 
-    // Tampilkan toast dari sini (dipanggil dari game thread = aman)
-    if(g_toastPending != 0 && aml)
-    {
+    // Toast dari game thread - aman
+    if(g_toastPending != 0 && aml) {
         aml->ShowToast(true, "SyncBlocker: %s",
             g_toastPending == 1 ? "ON" : "OFF");
         g_toastPending = 0;
@@ -52,19 +50,21 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
         if(isSyncPacket(data[i]))
         {
             g_blocked++;
-            if(g_blocked % 100 == 0)
-            {
+            // Ganti SA-MP packet ID dengan 0x00 - SA-MP skip tapi RakNet tetap happy
+            data[i] = 0x00;
+            
+            if(g_blocked % 100 == 0) {
                 aml->ShowToast(false, "[SB] ON | Blocked:%d", g_blocked);
                 LOG("blocked=%d passed=%d", g_blocked, g_passed);
             }
-            return 0;
+            // Return result normal - RakNet tidak crash!
+            return result;
         }
     }
     g_passed++;
     return result;
 }
 
-// Thread cek file toggle
 void* toggleThread(void*)
 {
     bool lastState = false;
@@ -75,13 +75,11 @@ void* toggleThread(void*)
         bool fileExists = (f != nullptr);
         if(f) fclose(f);
 
-        if(fileExists != lastState)
-        {
-            lastState  = fileExists;
-            g_enabled  = fileExists;
-            g_blocked  = 0;
-            g_passed   = 0;
-            // Set flag, toast akan muncul dari game thread
+        if(fileExists != lastState) {
+            lastState      = fileExists;
+            g_enabled      = fileExists;
+            g_blocked      = 0;
+            g_passed       = 0;
             g_toastPending = fileExists ? 1 : 2;
             LOG("SyncBlocker: %s", g_enabled ? "ON" : "OFF");
         }
