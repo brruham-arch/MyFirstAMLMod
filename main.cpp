@@ -1,34 +1,20 @@
-#include <jni.h>
+#include <mod/amlmod.h>
+#include <mod/logger.h>
 #include <android/log.h>
-#include <stdio.h>
 
-struct ModInfo {
-    char szGUID[48];
-    char szName[48];
-    char szVersion[24];
-    char szAuthor[48];
-};
+MYMOD(com.burhan.myfirstmod, MyFirstMod, 1.0, Burhan)
 
-static ModInfo g_modinfo = {
-    "com.burhan.myfirstmod",
-    "MyFirstMod",
-    "1.0",
-    "Burhan"
-};
+static Logger loggerLocal;
+Logger* logger = &loggerLocal;
 
-extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
-    return &g_modinfo;
-}
+ON_MOD_LOAD()
+{
+    logger->SetTag("MyFirstMod");
+    logger->Info("=== MyFirstMod berhasil di-load! ===");
 
-extern "C" __attribute__((visibility("default"))) void OnModPreLoad() {
-    __android_log_print(ANDROID_LOG_ERROR, "MYFIRSTMOD", "=== PRELOAD ===");
-}
-
-extern "C" __attribute__((visibility("default"))) void OnModLoad() {
-    __android_log_print(ANDROID_LOG_ERROR, "MYFIRSTMOD", "=== LOAD ===");
-}
-
-__attribute__((constructor))
-static void onDlOpen() {
-    __android_log_print(ANDROID_LOG_ERROR, "MYFIRSTMOD", "=== CONSTRUCTOR ===");
+    uintptr_t pGTASA = aml->GetLib("libGTASA.so");
+    if(pGTASA)
+        logger->Info("libGTASA.so ditemukan di: 0x%X", pGTASA);
+    else
+        logger->Error("libGTASA.so tidak ditemukan!");
 }
