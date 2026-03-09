@@ -96,7 +96,7 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
         LOG("recvfrom hooked!");
     }
 
-    // Hook sendto untuk intercept /sb command
+    // Hook sendto untuk intercept /sbc command
     void* fnSend = dlsym(RTLD_DEFAULT, "sendto");
     if(fnSend) {
         aml->Hook(fnSend, (void*)HookedSendto, (void**)&origSendto);
