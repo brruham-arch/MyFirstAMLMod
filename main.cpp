@@ -15,9 +15,11 @@ static ModInfo g_modinfo("com.burhan.myfirstmod", "SyncBlocker", "1.0", "Burhan"
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-static bool g_enabled = false;
-static int  g_blocked = 0;
-static int  g_passed  = 0;
+static bool g_enabled    = false;
+static int  g_blocked    = 0;
+static int  g_passed     = 0;
+// Flag untuk toast - dibaca dari main thread (recvfrom)
+static int  g_toastPending = 0; // 1=ON, 2=OFF, 0=none
 
 bool isSyncPacket(unsigned char id) {
     return id == 203 || id == 207 || id == 208 ||
@@ -31,6 +33,15 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
                        int flags, struct sockaddr* addr, socklen_t* addrlen)
 {
     ssize_t result = origRecvfrom(sockfd, buf, len, flags, addr, addrlen);
+
+    // Tampilkan toast dari sini (dipanggil dari game thread = aman)
+    if(g_toastPending != 0 && aml)
+    {
+        aml->ShowToast(true, "SyncBlocker: %s",
+            g_toastPending == 1 ? "ON" : "OFF");
+        g_toastPending = 0;
+    }
+
     if(!g_enabled || result <= 4 || !buf) return result;
 
     unsigned char* data = (unsigned char*)buf;
@@ -53,27 +64,26 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
     return result;
 }
 
-// Thread yang cek file toggle setiap 2 detik
+// Thread cek file toggle
 void* toggleThread(void*)
 {
     bool lastState = false;
     while(true)
     {
         sleep(2);
-        // Cek apakah file sb_toggle ada
         FILE* f = fopen(TOGGLE_FILE, "r");
         bool fileExists = (f != nullptr);
         if(f) fclose(f);
 
         if(fileExists != lastState)
         {
-            lastState = fileExists;
-            g_enabled = fileExists;
-            g_blocked = 0;
-            g_passed  = 0;
+            lastState  = fileExists;
+            g_enabled  = fileExists;
+            g_blocked  = 0;
+            g_passed   = 0;
+            // Set flag, toast akan muncul dari game thread
+            g_toastPending = fileExists ? 1 : 2;
             LOG("SyncBlocker: %s", g_enabled ? "ON" : "OFF");
-            if(aml) aml->ShowToast(true, "SyncBlocker: %s",
-                g_enabled ? "ON" : "OFF");
         }
     }
     return nullptr;
@@ -91,11 +101,10 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
         LOG("recvfrom hooked!");
     }
 
-    // Start toggle thread
     pthread_t tid;
     pthread_create(&tid, nullptr, toggleThread, nullptr);
     pthread_detach(tid);
 
     aml->ShowToast(true, "SyncBlocker siap!\nBuat file sb_toggle di Download untuk ON");
-    LOG("SyncBlocker ready! File trigger: %s", TOGGLE_FILE);
+    LOG("SyncBlocker ready!");
 }
