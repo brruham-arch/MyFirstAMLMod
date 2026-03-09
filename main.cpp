@@ -58,12 +58,12 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     // Patch IsAndroidPaused variable = 0 (selalu tidak pause)
     uintptr_t pIsPaused = pGTASA + 0x6855bc;
     int zero = 0;
-    aml->Write((void*)pIsPaused, &zero, sizeof(int));
+    aml->Write(pIsPaused, (uintptr_t)&zero, sizeof(int));
     LOG("IsAndroidPaused patched!");
 
     // Patch WasAndroidPaused juga
     uintptr_t pWasPaused = pGTASA + 0x6d7048;
-    aml->Write((void*)pWasPaused, &zero, sizeof(int));
+    aml->Write(pWasPaused, (uintptr_t)&zero, sizeof(int));
     LOG("WasAndroidPaused patched!");
 
     aml->ShowToast(true, "AntiPause aktif!");
