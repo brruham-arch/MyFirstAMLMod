@@ -14,7 +14,6 @@ IAML* aml = nullptr;
 static int g_blocked = 0;
 static int g_passed  = 0;
 
-// SA-MP sync packet IDs
 bool isSyncPacket(unsigned char id) {
     return id == 203 || id == 207 || id == 208 ||
            id == 209 || id == 210 || id == 211;
@@ -31,34 +30,26 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len, int flags, struct sock
         unsigned char* data = (unsigned char*)buf;
         unsigned char rakID = data[0];
 
-        // Hanya proses RakNet data packet (0x68 atau 0x6E)
         if(rakID == 0x68 || rakID == 0x6E)
         {
-            // Scan seluruh buffer cari SA-MP sync packet ID
-            // RakNet header minimal 4 byte, SA-MP ID ada di dalam payload
-            bool found = false;
             for(int i = 4; i < (int)result - 1; i++)
             {
                 if(isSyncPacket(data[i]))
                 {
-                    // Verifikasi: byte sebelumnya harus 0x00 (padding) 
-                    // atau ini memang packet boundary
-                    found = true;
+                    // Ganti ID saja dengan 0xFF (unknown packet, SA-MP skip)
+                    data[i] = 0xFF;
                     g_blocked++;
-                    
-                    if(g_blocked % 30 == 0)
+
+                    if(g_blocked % 50 == 0)
                     {
-                        LOG("BLOCK rakID=0x%02X sampID=%d offset=%d blocked=%d passed=%d",
-                            rakID, data[i], i, g_blocked, g_passed);
+                        LOG("BLOCK sampID was %d offset=%d blocked=%d passed=%d",
+                            data[i], i, g_blocked, g_passed);
                         aml->ShowToast(false, "Blocked:%d Passed:%d", g_blocked, g_passed);
                     }
-                    
-                    // Zero out payload setelah RakNet header
-                    memset(data + 3, 0, result - 3);
                     break;
                 }
             }
-            if(!found) g_passed++;
+            g_passed++;
         }
     }
     return result;
@@ -73,7 +64,7 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     void* fnRecvfrom = dlsym(RTLD_DEFAULT, "recvfrom");
     if(fnRecvfrom) {
         aml->Hook(fnRecvfrom, (void*)HookedRecvfrom, (void**)&origRecvfrom);
-        LOG("SyncBlocker: recvfrom hooked!");
+        LOG("SyncBlocker: hooked!");
         aml->ShowToast(true, "SyncBlocker aktif!");
     }
 }
