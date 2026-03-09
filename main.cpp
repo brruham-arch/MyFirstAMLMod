@@ -8,33 +8,6 @@ static ModInfo g_modinfo("com.burhan.myfirstmod", "MyFirstMod", "1.0", "Burhan")
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-// Sync packet IDs yang mau di-block
-#define PACKET_PLAYER_SYNC       207
-#define PACKET_VEHICLE_SYNC      208
-#define PACKET_PASSENGER_SYNC    209
-#define PACKET_SPECTATING_SYNC   210
-#define PACKET_AIM_SYNC          203
-#define PACKET_UNOCCUPIED_SYNC   209
-
-// Tipe fungsi ProcessPacket
-typedef bool (*ProcessPacket_t)(void* pSAMP, unsigned char packetID, void* pData, int nLen);
-ProcessPacket_t origProcessPacket = nullptr;
-
-// Hook function
-bool HookedProcessPacket(void* pSAMP, unsigned char packetID, void* pData, int nLen)
-{
-    // Block sync dari player lain, pass semua yang lain
-    if(packetID == PACKET_PLAYER_SYNC ||
-       packetID == PACKET_VEHICLE_SYNC ||
-       packetID == PACKET_PASSENGER_SYNC ||
-       packetID == PACKET_SPECTATING_SYNC ||
-       packetID == PACKET_AIM_SYNC)
-    {
-        return true; // drop packet, jangan proses
-    }
-    return origProcessPacket(pSAMP, packetID, pData, nLen);
-}
-
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
     return modinfo;
 }
@@ -44,20 +17,23 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     if(!aml) return;
 
     uintptr_t pSAMP = aml->GetLib("libsamp.so");
-    LOG("libsamp.so = 0x%X", pSAMP);
+    uintptr_t pORIG = aml->GetLib("libSAMP_ORIG.so");
 
-    // Pattern scan ProcessPacket di libsamp.so
-    // Pattern ini umum untuk SA-MP Android 0.3.7
-    uintptr_t fnProcessPacket = aml->PatternScan(
-        "?? ?? ?? ?? 00 00 00 00 CF 00 00 00",
-        "libsamp.so"
-    );
-    LOG("ProcessPacket pattern = 0x%X", fnProcessPacket);
+    // Scan pattern yang lebih spesifik untuk ProcessPacket SA-MP
+    // Coba beberapa pattern umum
+    const char* patterns[] = {
+        "CF 00 00 00 D0 00 00 00",
+        "2D E9 ?? ?? 83 B0",
+        "10 B5 ?? ?? ?? ?? ?? ?? 08 B1",
+        "2D E9 F0 4F ?? ?? ?? ??",
+        nullptr
+    };
 
-    // Coba juga scan di libSAMP_ORIG.so
-    uintptr_t fnProcessPacketORIG = aml->PatternScan(
-        "?? ?? ?? ?? 00 00 00 00 CF 00 00 00",
-        "libSAMP_ORIG.so"
-    );
-    LOG("ProcessPacket ORIG pattern = 0x%X", fnProcessPacketORIG);
+    for(int i = 0; patterns[i]; i++) {
+        uintptr_t res1 = aml->PatternScan(patterns[i], "libsamp.so");
+        uintptr_t res2 = aml->PatternScan(patterns[i], "libSAMP_ORIG.so");
+        LOG("Pattern[%d] samp=0x%X orig=0x%X", i, 
+            res1 ? res1 - pSAMP : 0,
+            res2 ? res2 - pORIG : 0);
+    }
 }
