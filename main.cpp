@@ -47,7 +47,7 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     
     if(fnReceive)
     {
-        aml->Hook(fnReceive, (void*)HookedReceivePacket, (void**)&origReceivePacket);
+        aml->Hook((void*)fnReceive, (void*)HookedReceivePacket, (void**)&origReceivePacket);
         LOG("Hook terpasang!");
         aml->ShowToast(true, "SyncBlocker aktif!");
     }
