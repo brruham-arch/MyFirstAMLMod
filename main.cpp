@@ -1,6 +1,6 @@
+#include <mod/amlmod.h>
+#include <mod/iaml.h>
 #include <android/log.h>
-#include <stdint.h>
-#include <stdio.h>
 
 #define LOG(fmt, ...) __android_log_print(ANDROID_LOG_INFO, "MyFirstMod", fmt, ##__VA_ARGS__)
 
@@ -18,11 +18,21 @@ static ModInfo g_modinfo = {
     "Burhan"
 };
 
+IAML* aml = nullptr;
+
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
     return &g_modinfo;
 }
 
 extern "C" __attribute__((visibility("default"))) void OnModLoad() {
-    LOG("=== MyFirstMod berhasil di-load! ===");
-    LOG("aml interface tidak digunakan dulu");
+    aml = (IAML*)GetInterface("AMLInterface");
+    
+    LOG("=== MyFirstMod v0.3 ===");
+    LOG("aml = %p", aml);
+    
+    if(aml) {
+        uintptr_t pGTASA = aml->GetLib("libGTASA.so");
+        LOG("libGTASA.so base: 0x%X", pGTASA);
+        aml->ShowToast(true, "MyFirstMod loaded!");
+    }
 }
