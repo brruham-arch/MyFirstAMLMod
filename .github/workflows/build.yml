@@ -26,7 +26,7 @@ jobs:
             -I. \
             -s \
             -o libMyFirstMod.so \
-            main.cpp mod/config.cpp \
+            main.cpp \
             -llog \
             -static-libstdc++
 
