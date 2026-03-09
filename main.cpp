@@ -1,20 +1,28 @@
-#include <mod/amlmod.h>
-#include <mod/logger.h>
 #include <android/log.h>
+#include <stdint.h>
+#include <stdio.h>
 
-MYMOD(com.burhan.myfirstmod, MyFirstMod, 1.0, Burhan)
+#define LOG(fmt, ...) __android_log_print(ANDROID_LOG_INFO, "MyFirstMod", fmt, ##__VA_ARGS__)
 
-static Logger loggerLocal;
-Logger* logger = &loggerLocal;
+struct ModInfo {
+    char szGUID[48];
+    char szName[48];
+    char szVersion[24];
+    char szAuthor[48];
+};
 
-ON_MOD_LOAD()
-{
-    logger->SetTag("MyFirstMod");
-    logger->Info("=== MyFirstMod berhasil di-load! ===");
+static ModInfo g_modinfo = {
+    "com.burhan.myfirstmod",
+    "MyFirstMod",
+    "1.0",
+    "Burhan"
+};
 
-    uintptr_t pGTASA = aml->GetLib("libGTASA.so");
-    if(pGTASA)
-        logger->Info("libGTASA.so ditemukan di: 0x%X", pGTASA);
-    else
-        logger->Error("libGTASA.so tidak ditemukan!");
+extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
+    return &g_modinfo;
+}
+
+extern "C" __attribute__((visibility("default"))) void OnModLoad() {
+    LOG("=== MyFirstMod berhasil di-load! ===");
+    LOG("aml interface tidak digunakan dulu");
 }
