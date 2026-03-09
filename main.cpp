@@ -56,24 +56,23 @@ sendto_t origSendto = nullptr;
 ssize_t HookedSendto(int sockfd, const void* buf, size_t len,
                      int flags, const struct sockaddr* addr, socklen_t addrlen)
 {
-    if(buf && len > 4)
+    if(buf && len >= 4)
     {
         const unsigned char* data = (const unsigned char*)buf;
-        // Cek apakah ini outgoing chat packet SA-MP (ID 0x59 = 89)
-        // lalu cek isi string command kita
-        for(int i = 0; i < (int)len - 4 && i < 8; i++)
+        // Scan seluruh packet cari keyword #sbc
+        for(int i = 0; i < (int)len - 3; i++)
         {
-            // Cari string "/sbc" di dalam packet
-            if(data[i]   == '/' && data[i+1] == 's' && 
+            if(data[i]   == '#' && data[i+1] == 's' &&
                data[i+2] == 'b' && data[i+3] == 'c')
             {
                 g_enabled = !g_enabled;
                 g_blocked = 0;
                 g_passed  = 0;
-                LOG("Toggle: %s", g_enabled ? "ON" : "OFF");
+                LOG("SyncBlocker toggle: %s", g_enabled ? "ON" : "OFF");
                 aml->ShowToast(true, "SyncBlocker: %s",
                     g_enabled ? "ON" : "OFF");
-                return len; // block dari server
+                // Block packet agar tidak dikirim ke server
+                return len;
             }
         }
     }
@@ -98,5 +97,6 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad() {
         LOG("sendto hooked!");
     }
 
-    aml->ShowToast(true, "SyncBlocker siap!\nKetik /sbc untuk toggle");
+    aml->ShowToast(true, "SyncBlocker siap!\nKetik #sbc di chat untuk toggle");
+    LOG("SyncBlocker ready!");
 }
