@@ -11,85 +11,70 @@ static ModInfo g_modinfo("com.burhan.myfirstmod", "SyncBlocker", "1.0", "Burhan"
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-// Statistik
 static int g_blocked = 0;
 static int g_passed  = 0;
-static int g_toastTimer = 0;
 
-// Packet IDs sync player lain
-#define PACKET_PLAYER_SYNC      207  // 0xCF
-#define PACKET_VEHICLE_SYNC     208  // 0xD0  
-#define PACKET_PASSENGER_SYNC   209  // 0xD1
-#define PACKET_AIM_SYNC         203  // 0xCB
-#define PACKET_UNOCCUPIED_SYNC  210  // 0xD2
-#define PACKET_TRAILER_SYNC     211  // 0xD3
+#define PACKET_PLAYER_SYNC      207
+#define PACKET_VEHICLE_SYNC     208
+#define PACKET_PASSENGER_SYNC   209
+#define PACKET_AIM_SYNC         203
+#define PACKET_UNOCCUPIED_SYNC  210
+#define PACKET_TRAILER_SYNC     211
 
-typedef ssize_t (*recv_t)(int sockfd, void* buf, size_t len, int flags);
-recv_t origRecv = nullptr;
+bool isSyncPacket(unsigned char id) {
+    return id == PACKET_PLAYER_SYNC    ||
+           id == PACKET_VEHICLE_SYNC   ||
+           id == PACKET_PASSENGER_SYNC ||
+           id == PACKET_AIM_SYNC       ||
+           id == PACKET_UNOCCUPIED_SYNC||
+           id == PACKET_TRAILER_SYNC;
+}
 
-ssize_t HookedRecv(int sockfd, void* buf, size_t len, int flags)
+// Hook recvfrom
+typedef ssize_t (*recvfrom_t)(int, void*, size_t, int, struct sockaddr*, socklen_t*);
+recvfrom_t origRecvfrom = nullptr;
+
+ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len, int flags, struct sockaddr* addr, socklen_t* addrlen)
 {
-    ssize_t result = origRecv(sockfd, buf, len, flags);
-    
-    if(result > 0 && buf)
+    ssize_t result = origRecvfrom(sockfd, buf, len, flags, addr, addrlen);
+    if(result > 1 && buf)
     {
         unsigned char* data = (unsigned char*)buf;
-        unsigned char packetID = data[0];
+        // SA-MP paket biasanya byte pertama = ID
+        // Tapi RakNet punya header 1-2 byte sebelum packet ID
+        // Coba offset 0 dan 1
+        unsigned char id0 = data[0];
+        unsigned char id1 = (result > 1) ? data[1] : 0;
         
-        bool shouldBlock = (
-            packetID == PACKET_PLAYER_SYNC     ||
-            packetID == PACKET_VEHICLE_SYNC    ||
-            packetID == PACKET_PASSENGER_SYNC  ||
-            packetID == PACKET_AIM_SYNC        ||
-            packetID == PACKET_UNOCCUPIED_SYNC ||
-            packetID == PACKET_TRAILER_SYNC
-        );
+        LOG("recvfrom: id0=0x%02X id1=0x%02X len=%d", id0, id1, (int)result);
         
-        if(shouldBlock)
+        if(isSyncPacket(id0) || isSyncPacket(id1))
         {
             g_blocked++;
-            // Kosongkan buffer agar SA-MP tidak proses
             memset(buf, 0, result);
-            
-            // Toast setiap 100 packet di-block
-            if(aml && g_blocked % 100 == 0)
+            if(g_blocked % 50 == 0)
             {
-                aml->ShowToast(false, "SyncBlocker: %d blocked / %d passed", 
-                    g_blocked, g_passed);
-                LOG("SyncBlocker: blocked=%d passed=%d lastID=%d", 
-                    g_blocked, g_passed, packetID);
+                aml->ShowToast(false, "Blocked:%d Passed:%d", g_blocked, g_passed);
             }
+            return result;
         }
-        else
-        {
-            g_passed++;
-        }
+        g_passed++;
     }
-    
     return result;
 }
 
-extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
-    return modinfo;
-}
+extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
 
 extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     aml = (IAML*)GetInterface("AMLInterface");
     if(!aml) return;
-    
-    // Dapat alamat recv() via dlsym - TANPA OFFSET!
-    void* fnRecv = dlsym(RTLD_DEFAULT, "recv");
-    LOG("recv() addr = %p", fnRecv);
-    
-    if(fnRecv)
-    {
-        aml->Hook(fnRecv, (void*)HookedRecv, (void**)&origRecv);
-        LOG("SyncBlocker: Hook recv() terpasang!");
-        aml->ShowToast(true, "SyncBlocker aktif!\nrecv() hooked!");
-    }
-    else
-    {
-        LOG("SyncBlocker: GAGAL - recv() tidak ditemukan!");
-        aml->ShowToast(true, "SyncBlocker GAGAL!");
+
+    void* fnRecvfrom = dlsym(RTLD_DEFAULT, "recvfrom");
+    LOG("recvfrom() = %p", fnRecvfrom);
+
+    if(fnRecvfrom) {
+        aml->Hook(fnRecvfrom, (void*)HookedRecvfrom, (void**)&origRecvfrom);
+        LOG("recvfrom hooked!");
+        aml->ShowToast(true, "SyncBlocker v2!\nrecvfrom() hooked!");
     }
 }
