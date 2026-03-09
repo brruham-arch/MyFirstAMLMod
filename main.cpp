@@ -17,13 +17,15 @@ IAML* aml = nullptr;
 
 static bool g_enabled    = false;
 static int  g_blocked    = 0;
-static int  g_passed     = 0;
 static int  g_toastPending = 0;
 
 bool isSyncPacket(unsigned char id) {
     return id == 203 || id == 207 || id == 208 ||
            id == 209 || id == 210 || id == 211;
 }
+
+// Gunakan buffer lokal sendiri, bukan modifikasi buffer asli
+static unsigned char g_fakeBuf[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 typedef ssize_t (*recvfrom_t)(int,void*,size_t,int,struct sockaddr*,socklen_t*);
 recvfrom_t origRecvfrom = nullptr;
@@ -33,7 +35,6 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
 {
     ssize_t result = origRecvfrom(sockfd, buf, len, flags, addr, addrlen);
 
-    // Toast dari game thread - aman
     if(g_toastPending != 0 && aml) {
         aml->ShowToast(true, "SyncBlocker: %s",
             g_toastPending == 1 ? "ON" : "OFF");
@@ -42,7 +43,8 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
 
     if(!g_enabled || result <= 4 || !buf) return result;
 
-    unsigned char* data = (unsigned char*)buf;
+    // Baca saja, JANGAN modifikasi buffer asli
+    const unsigned char* data = (const unsigned char*)buf;
     if(data[0] != 0x68 && data[0] != 0x6E) return result;
 
     for(int i = 4; i < (int)result - 1; i++)
@@ -50,18 +52,18 @@ ssize_t HookedRecvfrom(int sockfd, void* buf, size_t len,
         if(isSyncPacket(data[i]))
         {
             g_blocked++;
-            // Ganti SA-MP packet ID dengan 0x00 - SA-MP skip tapi RakNet tetap happy
-            data[i] = 0x00;
-            
             if(g_blocked % 100 == 0) {
-                aml->ShowToast(false, "[SB] ON | Blocked:%d", g_blocked);
-                LOG("blocked=%d passed=%d", g_blocked, g_passed);
+                aml->ShowToast(false, "[SB] Blocked:%d", g_blocked);
+                LOG("blocked=%d", g_blocked);
             }
-            // Return result normal - RakNet tidak crash!
-            return result;
+            // Kembalikan buffer fake 8 byte kosong
+            // SA-MP terima "packet kosong" = tidak ada yang diproses
+            if(len >= 8) {
+                memcpy(buf, g_fakeBuf, 8);
+                return 8;
+            }
         }
     }
-    g_passed++;
     return result;
 }
 
@@ -79,7 +81,6 @@ void* toggleThread(void*)
             lastState      = fileExists;
             g_enabled      = fileExists;
             g_blocked      = 0;
-            g_passed       = 0;
             g_toastPending = fileExists ? 1 : 2;
             LOG("SyncBlocker: %s", g_enabled ? "ON" : "OFF");
         }
