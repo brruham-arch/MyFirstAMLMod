@@ -6,7 +6,6 @@
 
 static ModInfo g_modinfo("com.burhan.myfirstmod", "MyFirstMod", "1.0", "Burhan");
 ModInfo* modinfo = &g_modinfo;
-
 IAML* aml = nullptr;
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
@@ -15,13 +14,14 @@ extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
 
 extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     aml = (IAML*)GetInterface("AMLInterface");
-    
-    LOG("=== MyFirstMod v0.3 ===");
-    LOG("aml = %p", aml);
-    
-    if(aml) {
-        uintptr_t pGTASA = aml->GetLib("libGTASA.so");
-        LOG("libGTASA.so base: 0x%X", pGTASA);
-        aml->ShowToast(true, "MyFirstMod loaded!");
-    }
+    if(!aml) return;
+
+    // Cari base address libsamp.so dan libSAMP_ORIG.so
+    uintptr_t pSAMP = aml->GetLib("libsamp.so");
+    uintptr_t pSAMPORIG = aml->GetLib("libSAMP_ORIG.so");
+    uintptr_t pGTASA = aml->GetLib("libGTASA.so");
+
+    LOG("libGTASA.so    = 0x%X", pGTASA);
+    LOG("libsamp.so     = 0x%X", pSAMP);
+    LOG("libSAMP_ORIG.so= 0x%X", pSAMPORIG);
 }
