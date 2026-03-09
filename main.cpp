@@ -8,6 +8,13 @@ static ModInfo g_modinfo("com.burhan.myfirstmod", "MyFirstMod", "1.0", "Burhan")
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
+// Dipanggil setiap kali ada interface baru didaftarkan
+extern "C" __attribute__((visibility("default"))) 
+void OnInterfaceAdded(const char* name, const void* ptr)
+{
+    LOG("Interface: %s = %p", name, ptr);
+}
+
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
     return modinfo;
 }
@@ -15,6 +22,5 @@ extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() {
 extern "C" __attribute__((visibility("default"))) void OnModLoad() {
     aml = (IAML*)GetInterface("AMLInterface");
     if(!aml) return;
-    LOG("=== MyFirstMod stable ===");
-    aml->ShowToast(true, "MyFirstMod loaded!");
+    LOG("=== List semua interface ===");
 }
