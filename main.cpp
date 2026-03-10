@@ -1,51 +1,131 @@
 #include <mod/amlmod.h>
 #include <mod/iaml.h>
 #include <android/log.h>
+#include <dlfcn.h>
+#include <unistd.h>
+#include <cstring>
+#include <cstdint>
 
-#define LOG(fmt, ...) __android_log_print(ANDROID_LOG_INFO, "MyFirstMod", fmt, ##__VA_ARGS__)
+#define LOG_TAG "BurhanAMLMod"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.myfirstmod", "AntiPause", "1.0", "Burhan");
+static ModInfo g_modinfo("com.burhan.amlnewmod", "BurhanAMLNewMod", "1.0", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
+
 IAML* aml = nullptr;
 
-typedef void (*SetAndroidPaused_t)(int paused);
-SetAndroidPaused_t origSetAndroidPaused = nullptr;
+uintptr_t libGTASA = 0;
 
-void HookedSetAndroidPaused(int paused)
+void PrintGameInfo()
 {
-    if(paused) {
-        LOG("AntiPause: block SetAndroidPaused!");
-        return;
+    if(!aml) return;
+
+    libGTASA = (uintptr_t)aml->GetLib("libGTASA.so");
+
+    if(libGTASA)
+    {
+        LOGI("libGTASA base address: %p", (void*)libGTASA);
+        aml->ShowToast(true, "libGTASA base: %p", (void*)libGTASA);
     }
-    origSetAndroidPaused(paused);
+    else
+    {
+        LOGE("libGTASA not found");
+        aml->ShowToast(true, "libGTASA not found");
+    }
 }
 
-typedef void (*AndroidPause_t)();
-AndroidPause_t origAndroidPause = nullptr;
-
-void HookedAndroidPause()
+void TestPatternScan()
 {
-    LOG("AntiPause: block AndroidPause!");
+    if(!aml) return;
+
+    void* result = aml->PatternScan("00 00 80 3F ?? ?? ?? ??", "libGTASA.so");
+
+    if(result)
+    {
+        LOGI("Pattern found at: %p", result);
+        aml->ShowToast(true, "Pattern found: %p", result);
+    }
+    else
+    {
+        LOGE("Pattern not found");
+        aml->ShowToast(true, "Pattern not found");
+    }
 }
 
-extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
+void TestNOPPatch()
+{
+    if(!aml) return;
+    if(!libGTASA) return;
 
-extern "C" __attribute__((visibility("default"))) void OnModLoad() {
+    uintptr_t testAddress = libGTASA + 0x1000;
+
+    aml->PlaceNOP((void*)testAddress, 4);
+
+    LOGI("NOP placed at: %p", (void*)testAddress);
+    aml->ShowToast(true, "NOP placed");
+}
+
+typedef void (*GameTickFn)();
+GameTickFn origGameTick = nullptr;
+
+void HookedGameTick()
+{
+    if(origGameTick)
+        origGameTick();
+
+    static int counter = 0;
+
+    counter++;
+
+    if(counter == 600)
+    {
+        LOGI("GameTick hook working");
+        aml->ShowToast(true, "Hook aktif");
+    }
+}
+
+void InstallHookExample()
+{
+    if(!aml) return;
+    if(!libGTASA) return;
+
+    uintptr_t hookAddress = libGTASA + 0x2000;
+
+    aml->Hook((void*)hookAddress, (void*)HookedGameTick, (void**)&origGameTick);
+
+    LOGI("Hook installed at: %p", (void*)hookAddress);
+}
+
+void RunModInit()
+{
+    PrintGameInfo();
+
+    TestPatternScan();
+
+    TestNOPPatch();
+
+    InstallHookExample();
+}
+
+extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo()
+{
+    return modinfo;
+}
+
+extern "C" __attribute__((visibility("default"))) void OnModLoad()
+{
     aml = (IAML*)GetInterface("AMLInterface");
 
-    uintptr_t pGTASA = aml->GetLib("libGTASA.so");
-    LOG("libGTASA = 0x%X", pGTASA);
+    if(!aml)
+    {
+        LOGE("AML interface not found");
+        return;
+    }
 
-    uintptr_t fnSetPaused = pGTASA + 0x00269ae4;
-    uintptr_t fnAndPause  = pGTASA + 0x00269af4;
+    LOGI("=== Burhan AML Mod Loaded ===");
 
-    aml->Hook((void*)fnSetPaused, (void*)HookedSetAndroidPaused,
-              (void**)&origSetAndroidPaused);
-    LOG("SetAndroidPaused hooked!");
+    aml->ShowToast(true, "Burhan AML Mod aktif");
 
-    aml->Hook((void*)fnAndPause, (void*)HookedAndroidPause,
-              (void**)&origAndroidPause);
-    LOG("AndroidPause hooked!");
-
-    aml->ShowToast(true, "AntiPause aktif!");
+    RunModInit();
 }
