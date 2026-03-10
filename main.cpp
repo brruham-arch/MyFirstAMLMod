@@ -8,20 +8,24 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "4.0", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "4.1", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-// file ini kalau ADA = AntiPause ON, kalau TIDAK ADA = OFF
 #define TRIGGER_FILE "/storage/emulated/0/Download/antipause_on"
 
-bool isActive = false;
+volatile bool isActive = false;
 
 void (*origNvOnPause)() = nullptr;
 
 void HookedNvOnPause()
 {
-    if(isActive) return; // block pause
+    if(isActive)
+    {
+        LOGI("pause blocked");
+        return;
+    }
+    // tidak block
 }
 
 void* WatcherThread(void*)
@@ -53,6 +57,13 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
     uintptr_t pGTASA = aml->GetLib("libGTASA.so");
     if(!pGTASA) return;
 
+    // cek file saat startup
+    FILE* f = fopen(TRIGGER_FILE, "r");
+    isActive = (f != nullptr);
+    if(f) fclose(f);
+
+    LOGI("AntiPause startup, isActive=%d", isActive ? 1 : 0);
+
     aml->Hook(
         (void*)(pGTASA + 0x274001),
         (void*)HookedNvOnPause,
@@ -63,6 +74,5 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
     pthread_create(&thread, nullptr, WatcherThread, nullptr);
     pthread_detach(thread);
 
-    LOGI("AntiPause v4.0 ready");
-    aml->ShowToast(true, "AntiPause v4.0 ready!");
+    aml->ShowToast(true, "AntiPause v4.1 - %s", isActive ? "ON" : "OFF");
 }
