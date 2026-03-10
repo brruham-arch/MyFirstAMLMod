@@ -5,22 +5,16 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "2.4", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "2.5", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
 void (*origNvOnPause)(void*, void*) = nullptr;
-void (*origInnerPause)()            = nullptr;
 
 void HookedNvOnPause(void* env, void* thiz)
 {
     LOGI("NvOnPause pass through");
     if(origNvOnPause) origNvOnPause(env, thiz);
-}
-
-void HookedInnerPause()
-{
-    LOGI("InnerPause blocked!");
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -35,18 +29,17 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
 
     LOGI("libGTASA base: 0x%X", pGTASA);
 
+    // hook onPause untuk pass through
     aml->Hook(
         (void*)(pGTASA + 0x274001),
         (void*)HookedNvOnPause,
         (void**)&origNvOnPause
     );
+    LOGI("origNvOnPause: %p", (void*)origNvOnPause);
 
-    aml->Hook(
-        (void*)(pGTASA + 0x27c741),
-        (void*)HookedInnerPause,
-        (void**)&origInnerPause
-    );
+    // NOP InnerPause — tidak perlu hook, langsung patch
+    aml->PlaceNOP(pGTASA + 0x27c741, 4);
+    LOGI("InnerPause NOP'd");
 
-    LOGI("Hooks installed");
-    aml->ShowToast(true, "AntiPause v2.4 aktif!");
+    aml->ShowToast(true, "AntiPause v2.5 aktif!");
 }
