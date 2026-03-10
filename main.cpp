@@ -5,16 +5,15 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "3.5", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "3.6", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-void (*origStopThread)() = nullptr;
+void (*origAFKHandler)() = nullptr;
 
-void HookedStopThread()
+void HookedAFKHandler()
 {
-    LOGI("StopThread blocked!");
-    // jangan stop thread SA-MP saat pause
+    LOGI("AFK handler blocked!");
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -25,16 +24,16 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
     if(!aml) return;
 
     uintptr_t pSAMP = aml->GetLib("libsamp.so");
-    if(!pSAMP) { LOGI("libsamp not found"); return; }
+    if(!pSAMP) return;
 
     LOGI("libsamp base: 0x%X", pSAMP);
 
     aml->Hook(
-        (void*)(pSAMP + 0x1e252c),
-        (void*)HookedStopThread,
-        (void**)&origStopThread
+        (void*)(pSAMP + 0x1514dc),
+        (void*)HookedAFKHandler,
+        (void**)&origAFKHandler
     );
 
-    LOGI("origStopThread: %p", (void*)origStopThread);
-    aml->ShowToast(true, "AntiPause v3.5 aktif!");
+    LOGI("origAFKHandler: %p", (void*)origAFKHandler);
+    aml->ShowToast(true, "AntiPause v3.6 aktif!");
 }
