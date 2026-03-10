@@ -5,21 +5,16 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.1", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.2", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-void (*origSetAndroidPaused)(int) = nullptr;
-void (*origAndroidPaused)()       = nullptr;
+void (*origMenuPauseGame)(bool) = nullptr;
 
-void HookedSetAndroidPaused(int paused)
+void HookedMenuPauseGame(bool pause)
 {
-    LOGI("SetAndroidPaused(%d) blocked", paused);
-}
-
-void HookedAndroidPaused()
-{
-    LOGI("AndroidPaused() blocked");
+    LOGI("Menu_PauseGame(%d) blocked", pause);
+    // tidak panggil original = pause menu tidak muncul
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -34,21 +29,12 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
 
     LOGI("libGTASA base: 0x%X", pGTASA);
 
-    // Hook SetAndroidPaused
     aml->Hook(
-        (void*)(pGTASA + 0x269af4),
-        (void*)HookedSetAndroidPaused,
-        (void**)&origSetAndroidPaused
+        (void*)(pGTASA + 0x2a93e0),
+        (void*)HookedMenuPauseGame,
+        (void**)&origMenuPauseGame
     );
-    LOGI("Hook SetAndroidPaused OK");
+    LOGI("Hook Menu_PauseGame OK");
 
-    // Hook AndroidPaused
-    aml->Hook(
-        (void*)(pGTASA + 0x269ae4),
-        (void*)HookedAndroidPaused,
-        (void**)&origAndroidPaused
-    );
-    LOGI("Hook AndroidPaused OK");
-
-    aml->ShowToast(true, "AntiPause v1.1 aktif!");
+    aml->ShowToast(true, "AntiPause v1.2 aktif!");
 }
