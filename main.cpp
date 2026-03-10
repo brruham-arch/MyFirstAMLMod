@@ -5,15 +5,21 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.0", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.1", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
 void (*origSetAndroidPaused)(int) = nullptr;
+void (*origAndroidPaused)()       = nullptr;
 
 void HookedSetAndroidPaused(int paused)
 {
-    LOGI("SetAndroidPaused called: %d — ignored", paused);
+    LOGI("SetAndroidPaused(%d) blocked", paused);
+}
+
+void HookedAndroidPaused()
+{
+    LOGI("AndroidPaused() blocked");
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -28,12 +34,21 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
 
     LOGI("libGTASA base: 0x%X", pGTASA);
 
+    // Hook SetAndroidPaused
     aml->Hook(
         (void*)(pGTASA + 0x269af4),
         (void*)HookedSetAndroidPaused,
         (void**)&origSetAndroidPaused
     );
+    LOGI("Hook SetAndroidPaused OK");
 
-    LOGI("AntiPause hook installed!");
-    aml->ShowToast(true, "AntiPause aktif!");
+    // Hook AndroidPaused
+    aml->Hook(
+        (void*)(pGTASA + 0x269ae4),
+        (void*)HookedAndroidPaused,
+        (void**)&origAndroidPaused
+    );
+    LOGI("Hook AndroidPaused OK");
+
+    aml->ShowToast(true, "AntiPause v1.1 aktif!");
 }
