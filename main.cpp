@@ -7,14 +7,18 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "2.0", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "2.1", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 uintptr_t pGTASA = 0;
 
 void* AntiPauseThread(void*)
 {
-    LOGI("AntiPause thread started");
+    // tunggu 15 detik — biarkan game loading selesai dulu
+    LOGI("AntiPause thread waiting for game to load...");
+    sleep(15);
+    LOGI("AntiPause thread active!");
+
     while(true)
     {
         if(pGTASA)
@@ -26,7 +30,7 @@ void* AntiPauseThread(void*)
                 LOGI("IsAndroidPaused reset!");
             }
         }
-        usleep(100000); // 100ms
+        usleep(100000); // cek setiap 100ms
     }
     return nullptr;
 }
@@ -47,6 +51,6 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
     pthread_create(&thread, nullptr, AntiPauseThread, nullptr);
     pthread_detach(thread);
 
-    LOGI("AntiPause thread launched");
-    aml->ShowToast(true, "AntiPause v2.0 aktif!");
+    LOGI("AntiPause thread launched, delay 15s");
+    aml->ShowToast(true, "AntiPause v2.1 aktif!");
 }
