@@ -5,20 +5,18 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "2.8", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "3.0", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-// kandidat onResume — hook semua, lihat mana yang terpanggil saat resume
-void (*orig1)(void*,void*) = nullptr;
-void (*orig2)(void*,void*) = nullptr;
-void (*orig3)(void*,void*) = nullptr;
-void (*orig4)(void*,void*) = nullptr;
+void (*origAndroidPause)() = nullptr;
 
-void Hook1(void* e,void* t){ LOGI("0x273F01 called!"); if(orig1)orig1(e,t); }
-void Hook2(void* e,void* t){ LOGI("0x274101 called!"); if(orig2)orig2(e,t); }
-void Hook3(void* e,void* t){ LOGI("0x274201 called!"); if(orig3)orig3(e,t); }
-void Hook4(void* e,void* t){ LOGI("0x274301 called!"); if(orig4)orig4(e,t); }
+void HookedAndroidPause()
+{
+    LOGI("AndroidPause() blocked!");
+    // tidak panggil original = game tidak pause
+    // EGL tetap aman karena ini bukan JNI lifecycle
+}
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
 
@@ -32,11 +30,13 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
 
     LOGI("libGTASA base: 0x%X", pGTASA);
 
-    aml->Hook((void*)(pGTASA + 0x273F01),(void*)Hook1,(void**)&orig1);
-    aml->Hook((void*)(pGTASA + 0x274101),(void*)Hook2,(void**)&orig2);
-    aml->Hook((void*)(pGTASA + 0x274201),(void*)Hook3,(void**)&orig3);
-    aml->Hook((void*)(pGTASA + 0x274301),(void*)Hook4,(void**)&orig4);
+    aml->Hook(
+        (void*)(pGTASA + 0x269af4),
+        (void*)HookedAndroidPause,
+        (void**)&origAndroidPause
+    );
 
-    LOGI("Probe hooks installed");
-    aml->ShowToast(true, "AntiPause v2.8 probe");
+    LOGI("origAndroidPause: %p", (void*)origAndroidPause);
+    LOGI("Hook AndroidPause OK");
+    aml->ShowToast(true, "AntiPause v3.0 aktif!");
 }
