@@ -1,70 +1,39 @@
 #include <mod/amlmod.h>
 #include <mod/iaml.h>
 #include <android/log.h>
-#include <cstdint>
 
-#define LOG_TAG "BurhanCore"
+#define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.coremod", "BurhanCoreMod", "1.0", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.0", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
-
 IAML* aml = nullptr;
 
-uintptr_t libGTASA = 0;
-uintptr_t libSAMP = 0;
+void (*origSetAndroidPaused)(int) = nullptr;
 
-void DetectLibraries()
+void HookedSetAndroidPaused(int paused)
 {
-    libGTASA = (uintptr_t)aml->GetLib("libGTASA.so");
-    libSAMP  = (uintptr_t)aml->GetLib("libsamp.so");
-
-    if(libGTASA)
-        LOGI("libGTASA base: %p", (void*)libGTASA);
-    else
-        LOGE("libGTASA not found");
-
-    if(libSAMP)
-        LOGI("libsamp base: %p", (void*)libSAMP);
+    LOGI("SetAndroidPaused called: %d — ignored", paused);
 }
 
-void InitMod()
+extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
+
+extern "C" __attribute__((visibility("default"))) void OnModLoad()
 {
-    LOGI("InitMod start");
-
-    DetectLibraries();
-
-    if(libGTASA)
-        aml->ShowToast(true, "GTASA detected");
-
-    LOGI("InitMod complete");
-}
-
-extern "C"
-__attribute__((visibility("default")))
-ModInfo* __GetModInfo()
-{
-    return modinfo;
-}
-
-extern "C"
-__attribute__((visibility("default")))
-void OnModLoad()
-{
-    LOGI("=== BurhanCoreMod loaded ===");
-
     aml = (IAML*)GetInterface("AMLInterface");
+    if(!aml) return;
 
-    if(!aml)
-    {
-        LOGE("AML interface not found");
-        return;
-    }
+    uintptr_t pGTASA = aml->GetLib("libGTASA.so");
+    if(!pGTASA) { LOGI("libGTASA not found"); return; }
 
-    LOGI("AML interface acquired");
+    LOGI("libGTASA base: 0x%X", pGTASA);
 
-    aml->ShowToast(true, "BurhanCoreMod aktif");
+    aml->Hook(
+        (void*)(pGTASA + 0x269af4),
+        (void*)HookedSetAndroidPaused,
+        (void**)&origSetAndroidPaused
+    );
 
-    InitMod();
+    LOGI("AntiPause hook installed!");
+    aml->ShowToast(true, "AntiPause aktif!");
 }
