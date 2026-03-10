@@ -60,7 +60,7 @@ void TestNOPPatch()
 
     uintptr_t testAddress = libGTASA + 0x1000;
 
-    aml->PlaceNOP((void*)testAddress, 4);
+    aml->PlaceNOP(testAddress, 4);
 
     LOGI("NOP placed at: %p", (void*)testAddress);
     aml->ShowToast(true, "NOP placed");
@@ -75,7 +75,6 @@ void HookedGameTick()
         origGameTick();
 
     static int counter = 0;
-
     counter++;
 
     if(counter == 600)
@@ -100,11 +99,8 @@ void InstallHookExample()
 void RunModInit()
 {
     PrintGameInfo();
-
     TestPatternScan();
-
     TestNOPPatch();
-
     InstallHookExample();
 }
 
