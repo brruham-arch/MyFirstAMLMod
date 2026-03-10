@@ -5,17 +5,16 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "3.0", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "3.1", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-void (*origAndroidPause)() = nullptr;
+void (*origSetAndroidPaused)(int) = nullptr;
 
-void HookedAndroidPause()
+void HookedSetAndroidPaused(int paused)
 {
-    LOGI("AndroidPause() blocked!");
+    LOGI("SetAndroidPaused(%d) blocked!", paused);
     // tidak panggil original = game tidak pause
-    // EGL tetap aman karena ini bukan JNI lifecycle
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -32,11 +31,10 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
 
     aml->Hook(
         (void*)(pGTASA + 0x269af4),
-        (void*)HookedAndroidPause,
-        (void**)&origAndroidPause
+        (void*)HookedSetAndroidPaused,
+        (void**)&origSetAndroidPaused
     );
 
-    LOGI("origAndroidPause: %p", (void*)origAndroidPause);
-    LOGI("Hook AndroidPause OK");
-    aml->ShowToast(true, "AntiPause v3.0 aktif!");
+    LOGI("Hook SetAndroidPaused OK");
+    aml->ShowToast(true, "AntiPause v3.1 aktif!");
 }
