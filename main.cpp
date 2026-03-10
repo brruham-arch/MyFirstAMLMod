@@ -1,32 +1,34 @@
 #include <mod/amlmod.h>
 #include <mod/iaml.h>
 #include <android/log.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.9", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "2.0", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 uintptr_t pGTASA = 0;
 
-void (*origNvOnPause)(void*, void*) = nullptr;
-
-void HookedNvOnPause(void* env, void* thiz)
+void* AntiPauseThread(void*)
 {
-    LOGI("onPause intercepted");
-
-    if(origNvOnPause)
-        origNvOnPause(env, thiz);
-
-    LOGI("origNvOnPause ptr after call: %p", (void*)origNvOnPause);
-
-    // hanya reset IsAndroidPaused — jangan sentuh yang lain
-    if(pGTASA)
+    LOGI("AntiPause thread started");
+    while(true)
     {
-        *(int*)(pGTASA + 0x6855bc) = 0;
-        LOGI("IsAndroidPaused = 0");
+        if(pGTASA)
+        {
+            int* isPaused = (int*)(pGTASA + 0x6855bc);
+            if(*isPaused != 0)
+            {
+                *isPaused = 0;
+                LOGI("IsAndroidPaused reset!");
+            }
+        }
+        usleep(100000); // 100ms
     }
+    return nullptr;
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -41,12 +43,10 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
 
     LOGI("libGTASA base: 0x%X", pGTASA);
 
-    aml->Hook(
-        (void*)(pGTASA + 0x274001),
-        (void*)HookedNvOnPause,
-        (void**)&origNvOnPause
-    );
+    pthread_t thread;
+    pthread_create(&thread, nullptr, AntiPauseThread, nullptr);
+    pthread_detach(thread);
 
-    LOGI("origNvOnPause: %p", (void*)origNvOnPause);
-    aml->ShowToast(true, "AntiPause v1.9 aktif!");
+    LOGI("AntiPause thread launched");
+    aml->ShowToast(true, "AntiPause v2.0 aktif!");
 }
