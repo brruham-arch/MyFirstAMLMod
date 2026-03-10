@@ -5,16 +5,31 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "3.1", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "3.2", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
+uintptr_t pGTASA = 0;
 
-void (*origSetAndroidPaused)(int) = nullptr;
+void (*origNvOnPause)()          = nullptr;
+void (*origEGLMakeCurrent)()     = nullptr;
 
-void HookedSetAndroidPaused(int paused)
+void HookedNvOnPause()
 {
-    LOGI("SetAndroidPaused(%d) blocked!", paused);
-    // tidak panggil original = game tidak pause
+    // block pause loop seperti v1.5
+}
+
+void HookedEGLMakeCurrent()
+{
+    LOGI("EGLMakeCurrent called - EGL restored!");
+    if(origEGLMakeCurrent) origEGLMakeCurrent();
+
+    // reset pause state setelah EGL restored
+    if(pGTASA)
+    {
+        *(int*)(pGTASA + 0x6855bc) = 0; // IsAndroidPaused
+        *(int*)(pGTASA + 0x6d7048) = 0; // WasAndroidPaused
+        LOGI("Pause state cleared after EGL restore!");
+    }
 }
 
 extern "C" __attribute__((visibility("default"))) ModInfo* __GetModInfo() { return modinfo; }
@@ -24,17 +39,21 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
     aml = (IAML*)GetInterface("AMLInterface");
     if(!aml) return;
 
-    uintptr_t pGTASA = aml->GetLib("libGTASA.so");
+    pGTASA = aml->GetLib("libGTASA.so");
     if(!pGTASA) return;
 
     LOGI("libGTASA base: 0x%X", pGTASA);
 
-    aml->Hook(
-        (void*)(pGTASA + 0x269af4),
-        (void*)HookedSetAndroidPaused,
-        (void**)&origSetAndroidPaused
-    );
+    // block pause loop (v1.5)
+    aml->Hook((void*)(pGTASA + 0x274001),
+              (void*)HookedNvOnPause,
+              (void**)&origNvOnPause);
 
-    LOGI("Hook SetAndroidPaused OK");
-    aml->ShowToast(true, "AntiPause v3.1 aktif!");
+    // hook EGLMakeCurrent untuk deteksi resume
+    aml->Hook((void*)(pGTASA + 0x268dd0),
+              (void*)HookedEGLMakeCurrent,
+              (void**)&origEGLMakeCurrent);
+
+    LOGI("Hooks installed");
+    aml->ShowToast(true, "AntiPause v3.2 aktif!");
 }
