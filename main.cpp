@@ -5,7 +5,7 @@
 #define LOG_TAG "AntiPause"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.8", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.antipause", "AntiPause", "1.9", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 uintptr_t pGTASA = 0;
@@ -16,17 +16,16 @@ void HookedNvOnPause(void* env, void* thiz)
 {
     LOGI("onPause intercepted");
 
-    // panggil original dengan alamat genap = EGL cleanup berjalan normal
     if(origNvOnPause)
         origNvOnPause(env, thiz);
 
-    // reset pause variable setelah original selesai
+    LOGI("origNvOnPause ptr after call: %p", (void*)origNvOnPause);
+
+    // hanya reset IsAndroidPaused — jangan sentuh yang lain
     if(pGTASA)
     {
-        *(int*)(pGTASA + 0x6855bc) = 0; // IsAndroidPaused
-        *(int*)(pGTASA + 0x6d7048) = 0; // WasAndroidPaused
-        *(int*)(pGTASA + 0x6d7058) = 1; // AndroidResume = true
-        LOGI("Pause vars reset OK");
+        *(int*)(pGTASA + 0x6855bc) = 0;
+        LOGI("IsAndroidPaused = 0");
     }
 }
 
@@ -42,14 +41,12 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
 
     LOGI("libGTASA base: 0x%X", pGTASA);
 
-    // 0x274000 (genap) bukan 0x274001 — supaya orig tersimpan benar
     aml->Hook(
-        (void*)(pGTASA + 0x274000),
+        (void*)(pGTASA + 0x274001),
         (void*)HookedNvOnPause,
         (void**)&origNvOnPause
     );
 
-    LOGI("origNvOnPause ptr: %p", (void*)origNvOnPause);
-    LOGI("Hook onPause OK");
-    aml->ShowToast(true, "AntiPause v1.8 aktif!");
+    LOGI("origNvOnPause: %p", (void*)origNvOnPause);
+    aml->ShowToast(true, "AntiPause v1.9 aktif!");
 }
