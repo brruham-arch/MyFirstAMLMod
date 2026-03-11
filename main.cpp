@@ -5,209 +5,197 @@
 #include <unistd.h>
 #include <cstdio>
 #include <cstring>
-#include <cstdlib>
 #include <cmath>
 #include <vector>
 #include <string>
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
+
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_opengl3.h"
 
 #define LOG_TAG "MemTool"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-static ModInfo g_modinfo("com.burhan.memtool", "MemTool", "1.1", "Burhanudin");
+static ModInfo g_modinfo("com.burhan.memtool", "MemTool", "2.0", "Burhanudin");
 ModInfo* modinfo = &g_modinfo;
 IAML* aml = nullptr;
 
-#define CMD_FILE    "/storage/emulated/0/Download/mem_cmd.txt"
-#define RESULT_FILE "/storage/emulated/0/Download/mem_result.txt"
+// ── ImGui state ───────────────────────────────────────
+static bool g_imguiInited   = false;
+static bool g_showWindow    = true;
+static int  g_screenW       = 1280;
+static int  g_screenH       = 720;
 
-struct ScanResult {
-    uintptr_t address;
-    float     fval;
-    int       ival;
-    bool      isFloat;
-};
-
-struct LockEntry {
-    uintptr_t address;
-    float     fval;
-    int       ival;
-    bool      isFloat;
-    bool      active;
-};
-
-struct MemRegion {
-    uintptr_t start;
-    uintptr_t end;
-    char      perms[8];
-    char      name[128];
-};
+// ── Scan state ────────────────────────────────────────
+struct ScanResult { uintptr_t addr; float fval; int ival; bool isFloat; };
+struct LockEntry  { uintptr_t addr; float fval; int ival; bool isFloat; bool active; std::string label; };
 
 static std::vector<ScanResult> g_results;
-static std::vector<ScanResult> g_unknown_prev;
+static std::vector<ScanResult> g_unknownPrev;
 static std::vector<LockEntry>  g_locks;
 static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ── Baca region READABLE dari /proc/self/maps ─────────
-std::vector<MemRegion> GetReadableRegions(bool doGTASA, bool doSAMP, bool doHeap)
+static char  g_searchVal[32]  = "100";
+static int   g_maxResults     = 50;
+static bool  g_typeFloat      = true;
+static bool  g_typeInt        = false;
+static bool  g_rangeGTASA     = true;
+static bool  g_rangeSAMP      = false;
+static bool  g_rangeHeap      = false;
+static bool  g_scanning       = false;
+static bool  g_unknownMode    = false;
+static char  g_statusMsg[128] = "Ready";
+
+// ── Touch passthrough ─────────────────────────────────
+typedef struct { int type; int action; float x; float y; int ptr; } NVTouch;
+typedef struct { int type; union { NVTouch touch; }; } NVEvent;
+
+int (*origGetNextEvent)(NVEvent*, int) = nullptr;
+
+int HookedGetNextEvent(NVEvent* ev, int waitMS)
 {
-    std::vector<MemRegion> regions;
-    FILE* maps = fopen("/proc/self/maps", "r");
-    if(!maps) return regions;
-
-    char line[512];
-    while(fgets(line, sizeof(line), maps))
+    int result = origGetNextEvent(ev, waitMS);
+    if(result && ev && g_showWindow)
     {
-        MemRegion r;
-        memset(&r, 0, sizeof(r));
-        char extra[256] = "";
+        // NV_EVENT_MULTITOUCH = 6
+        if(ev->type == 6)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            float x = ev->touch.x * g_screenW;
+            float y = ev->touch.y * g_screenH;
+            // action 0=down, 1=up, 2=move
+            if(ev->touch.action == 0) { io.MousePos = ImVec2(x,y); io.MouseDown[0] = true;  }
+            if(ev->touch.action == 1) { io.MousePos = ImVec2(x,y); io.MouseDown[0] = false; }
+            if(ev->touch.action == 2) { io.MousePos = ImVec2(x,y); }
 
-        // format: start-end perms offset dev inode name
-        sscanf(line, "%x-%x %4s %*s %*s %*s %127s",
-               &r.start, &r.end, r.perms, r.name);
-
-        // harus readable
-        if(r.perms[0] != 'r') continue;
-        // jangan executable pure (code section) — bisa crash
-        // tapi boleh r--, r-p, rw-
-        if(r.perms[2] == 'x') continue;
-        // skip ukuran terlalu besar (>64MB)
-        if(r.end - r.start > 0x4000000) continue;
-        // skip region kosong
-        if(r.start == r.end) continue;
-
-        bool isGTASA = strstr(r.name, "libGTASA") != nullptr;
-        bool isSAMP  = strstr(r.name, "libsamp")  != nullptr;
-        bool isHeap  = strstr(r.name, "[heap]")   != nullptr ||
-                       (r.name[0] == '\0' && strstr(r.perms, "rw") != nullptr);
-
-        if(doGTASA && isGTASA) { regions.push_back(r); continue; }
-        if(doSAMP  && isSAMP)  { regions.push_back(r); continue; }
-        if(doHeap  && isHeap)  { regions.push_back(r); continue; }
+            // kalau ImGui handle touch ini, consume event
+            if(io.WantCaptureMouse) ev->type = 0;
+        }
     }
-    fclose(maps);
-    LOGI("Readable regions: %zu", regions.size());
-    return regions;
+    return result;
 }
 
-// ── Search ────────────────────────────────────────────
-void DoSearch(float fval, int ival, bool sf, bool si,
-              bool doGTASA, bool doSAMP, bool doHeap, int maxR)
+// ── Readable memory regions ───────────────────────────
+struct MemRegion { uintptr_t start, end; char name[64]; };
+
+std::vector<MemRegion> GetRegions()
 {
+    std::vector<MemRegion> v;
+    FILE* f = fopen("/proc/self/maps", "r");
+    if(!f) return v;
+    char line[512];
+    while(fgets(line, sizeof(line), f))
+    {
+        MemRegion r; char perms[8]=""; r.name[0]=0;
+        sscanf(line, "%x-%x %4s %*s %*s %*s %63s", &r.start, &r.end, perms, r.name);
+        if(perms[0] != 'r') continue;
+        if(perms[2] == 'x') continue;
+        if(r.end - r.start > 0x4000000) continue;
+
+        bool isGTASA = strstr(r.name,"libGTASA") != nullptr;
+        bool isSAMP  = strstr(r.name,"libsamp")  != nullptr;
+        bool isHeap  = strstr(r.name,"[heap]")   != nullptr ||
+                       (r.name[0]==0 && perms[1]=='w');
+
+        if((g_rangeGTASA && isGTASA) ||
+           (g_rangeSAMP  && isSAMP)  ||
+           (g_rangeHeap  && isHeap))
+            v.push_back(r);
+    }
+    fclose(f);
+    return v;
+}
+
+// ── Scan thread ───────────────────────────────────────
+struct ScanArgs { float fval; int ival; int maxR; bool sf, si; std::string filter; };
+
+void* ScanThread(void* arg)
+{
+    ScanArgs* a = (ScanArgs*)arg;
+    auto regions = GetRegions();
+
     pthread_mutex_lock(&g_mutex);
     g_results.clear();
-
-    auto regions = GetReadableRegions(doGTASA, doSAMP, doHeap);
     int found = 0;
 
-    for(auto& r : regions)
+    if(a->filter.empty()) // normal search
     {
-        for(uintptr_t addr = r.start; addr <= r.end - 4 && found < maxR; addr += 4)
+        for(auto& r : regions)
         {
-            if(sf)
+            for(uintptr_t addr = r.start; addr <= r.end-4 && found < a->maxR; addr += 4)
+            {
+                if(a->sf)
+                {
+                    float v = *(float*)addr;
+                    if(!std::isnan(v) && !std::isinf(v))
+                    {
+                        bool m = (a->fval==0.f) ? v==0.f : fabsf(v-a->fval)/fabsf(a->fval)<0.001f;
+                        if(m) { g_results.push_back({addr,v,0,true}); found++; continue; }
+                    }
+                }
+                if(a->si && found < a->maxR)
+                {
+                    int v = *(int*)addr;
+                    if(v == a->ival) { g_results.push_back({addr,0.f,v,false}); found++; }
+                }
+            }
+            if(found >= a->maxR) break;
+        }
+        snprintf(g_statusMsg, sizeof(g_statusMsg), "Found: %d results", found);
+    }
+    else if(a->filter == "first") // unknown first scan
+    {
+        g_unknownPrev.clear();
+        for(auto& r : regions)
+            for(uintptr_t addr = r.start; addr <= r.end-4; addr += 4)
             {
                 float v = *(float*)addr;
                 if(!std::isnan(v) && !std::isinf(v))
-                {
-                    bool match = (fval == 0.0f) ? (v == 0.0f) :
-                                 (fabsf(v - fval) / fabsf(fval) < 0.001f);
-                    if(match)
-                    {
-                        g_results.push_back({addr, v, 0, true});
-                        found++;
-                        continue;
-                    }
-                }
+                    g_unknownPrev.push_back({addr,v,*(int*)addr,true});
             }
-            if(si && found < maxR)
-            {
-                int v = *(int*)addr;
-                if(v == ival)
-                {
-                    g_results.push_back({addr, 0.0f, v, false});
-                    found++;
-                }
-            }
-        }
-        if(found >= maxR) break;
+        snprintf(g_statusMsg, sizeof(g_statusMsg), "First scan: %zu values stored", g_unknownPrev.size());
+        g_unknownMode = true;
     }
-
-    LOGI("Search done: %d results", found);
-    pthread_mutex_unlock(&g_mutex);
-}
-
-// ── Unknown first scan ────────────────────────────────
-void DoUnknownFirstScan(bool doGTASA, bool doSAMP, bool doHeap)
-{
-    pthread_mutex_lock(&g_mutex);
-    g_unknown_prev.clear();
-
-    auto regions = GetReadableRegions(doGTASA, doSAMP, doHeap);
-    for(auto& r : regions)
+    else // unknown filter: changed/unchanged/increased/decreased
     {
-        for(uintptr_t addr = r.start; addr <= r.end - 4; addr += 4)
+        for(auto& prev : g_unknownPrev)
         {
-            float v = *(float*)addr;
-            if(!std::isnan(v) && !std::isinf(v))
-            {
-                g_unknown_prev.push_back({addr, v, *(int*)addr, true});
-            }
+            if(found >= a->maxR) break;
+            float cur = *(float*)prev.addr;
+            if(std::isnan(cur)||std::isinf(cur)) continue;
+            bool m = false;
+            if(a->filter=="changed")   m = cur != prev.fval;
+            if(a->filter=="unchanged") m = cur == prev.fval;
+            if(a->filter=="increased") m = cur >  prev.fval;
+            if(a->filter=="decreased") m = cur <  prev.fval;
+            if(m) { g_results.push_back({prev.addr,cur,*(int*)prev.addr,true}); found++; }
+            prev.fval = cur;
         }
+        snprintf(g_statusMsg, sizeof(g_statusMsg), "Filter '%s': %d results", a->filter.c_str(), found);
     }
-    LOGI("Unknown first scan: %zu values", g_unknown_prev.size());
+
     pthread_mutex_unlock(&g_mutex);
+    g_scanning = false;
+    delete a;
+    return nullptr;
 }
 
-// ── Unknown filter ────────────────────────────────────
-void DoUnknownFilter(const char* cond, int maxR)
+void StartScan(const std::string& filter="")
 {
-    pthread_mutex_lock(&g_mutex);
-    g_results.clear();
-    int found = 0;
-
-    for(auto& prev : g_unknown_prev)
-    {
-        if(found >= maxR) break;
-        float cur = *(float*)prev.address;
-        if(std::isnan(cur) || std::isinf(cur)) continue;
-
-        bool match = false;
-        if(strcmp(cond, "changed")   == 0) match = (cur != prev.fval);
-        if(strcmp(cond, "unchanged") == 0) match = (cur == prev.fval);
-        if(strcmp(cond, "increased") == 0) match = (cur >  prev.fval);
-        if(strcmp(cond, "decreased") == 0) match = (cur <  prev.fval);
-
-        if(match)
-        {
-            g_results.push_back({prev.address, cur, *(int*)prev.address, true});
-            found++;
-        }
-        prev.fval = cur;
-        prev.ival = *(int*)prev.address;
-    }
-    LOGI("Unknown filter '%s': %d results", cond, found);
-    pthread_mutex_unlock(&g_mutex);
-}
-
-// ── Tulis hasil ───────────────────────────────────────
-void WriteResults()
-{
-    FILE* f = fopen(RESULT_FILE, "w");
-    if(!f) { LOGI("Cannot open result file!"); return; }
-
-    pthread_mutex_lock(&g_mutex);
-    int cnt = (int)g_results.size();
-    fprintf(f, "count=%d\n", cnt);
-    for(int i = 0; i < cnt; i++)
-    {
-        auto& r = g_results[i];
-        if(r.isFloat)
-            fprintf(f, "%d=0x%X,float,%.4f\n", i+1, r.address, r.fval);
-        else
-            fprintf(f, "%d=0x%X,int,%d\n",     i+1, r.address, r.ival);
-    }
-    pthread_mutex_unlock(&g_mutex);
-    fclose(f);
-    LOGI("Results written: %d", cnt);
+    if(g_scanning) return;
+    g_scanning = true;
+    snprintf(g_statusMsg, sizeof(g_statusMsg), "Scanning...");
+    ScanArgs* a = new ScanArgs();
+    a->fval   = atof(g_searchVal);
+    a->ival   = atoi(g_searchVal);
+    a->maxR   = g_maxResults;
+    a->sf     = g_typeFloat;
+    a->si     = g_typeInt;
+    a->filter = filter;
+    pthread_t t;
+    pthread_create(&t, nullptr, ScanThread, a);
+    pthread_detach(t);
 }
 
 // ── Lock thread ───────────────────────────────────────
@@ -219,8 +207,8 @@ void* LockThread(void*)
         for(auto& lk : g_locks)
         {
             if(!lk.active) continue;
-            if(lk.isFloat) *(float*)lk.address = lk.fval;
-            else           *(int*)lk.address   = lk.ival;
+            if(lk.isFloat) *(float*)lk.addr = lk.fval;
+            else           *(int*)lk.addr   = lk.ival;
         }
         pthread_mutex_unlock(&g_mutex);
         usleep(50000);
@@ -228,118 +216,163 @@ void* LockThread(void*)
     return nullptr;
 }
 
-// ── Parse command ─────────────────────────────────────
-void ParseCommand(const char* cmd)
+// ── Render GUI ────────────────────────────────────────
+void RenderGUI()
 {
-    LOGI("CMD: %s", cmd);
+    ImGui::SetNextWindowSize(ImVec2(400, 520), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 50),    ImGuiCond_FirstUseEver);
+    ImGui::Begin("MemTool v2.0 | brruham", &g_showWindow);
 
-    if(strncmp(cmd, "search ", 7) == 0)
-    {
-        float fval = 0; int ival = 0;
-        char typeStr[16]  = "float";
-        char rangeStr[16] = "gtasa";
-        int  maxR = 50;
-        sscanf(cmd + 7, "%f %15s %15s %d", &fval, typeStr, rangeStr, &maxR);
-        ival = (int)fval;
+    // Value + Max
+    ImGui::Text("Value:"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(110);
+    ImGui::InputText("##v", g_searchVal, 32);
+    ImGui::SameLine(); ImGui::Text("Max:"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(55);
+    ImGui::InputInt("##m", &g_maxResults);
+    if(g_maxResults < 1)   g_maxResults = 1;
+    if(g_maxResults > 500) g_maxResults = 500;
 
-        bool sf = strstr(typeStr,  "float") || strstr(typeStr,  "both");
-        bool si = strstr(typeStr,  "int")   || strstr(typeStr,  "both");
-        bool rg = strstr(rangeStr, "gtasa") || strstr(rangeStr, "all");
-        bool rs = strstr(rangeStr, "samp")  || strstr(rangeStr, "all");
-        bool rh = strstr(rangeStr, "heap")  || strstr(rangeStr, "all");
+    // Type
+    ImGui::Text("Type: ");
+    ImGui::SameLine(); ImGui::Checkbox("Float", &g_typeFloat);
+    ImGui::SameLine(); ImGui::Checkbox("Int",   &g_typeInt);
 
-        DoSearch(fval, ival, sf, si, rg, rs, rh, maxR);
-        WriteResults();
-    }
-    else if(strncmp(cmd, "unknown_first", 13) == 0)
+    // Range
+    ImGui::Text("Range:");
+    ImGui::SameLine(); ImGui::Checkbox("GTASA", &g_rangeGTASA);
+    ImGui::SameLine(); ImGui::Checkbox("SAMP",  &g_rangeSAMP);
+    ImGui::SameLine(); ImGui::Checkbox("Heap",  &g_rangeHeap);
+
+    ImGui::Spacing();
+
+    // Search / Rescan
+    if(g_scanning)
     {
-        char rangeStr[16] = "gtasa";
-        sscanf(cmd + 13, " %15s", rangeStr);
-        bool rg = strstr(rangeStr, "gtasa") || strstr(rangeStr, "all");
-        bool rs = strstr(rangeStr, "samp")  || strstr(rangeStr, "all");
-        bool rh = strstr(rangeStr, "heap")  || strstr(rangeStr, "all");
-        DoUnknownFirstScan(rg, rs, rh);
-        FILE* f = fopen(RESULT_FILE, "w");
-        if(f) { fprintf(f, "status=first_scan_done\n"); fclose(f); }
+        ImGui::TextColored(ImVec4(1,1,0,1), "Scanning...");
     }
-    else if(strncmp(cmd, "unknown_filter ", 15) == 0)
+    else
     {
-        DoUnknownFilter(cmd + 15, 50);
-        WriteResults();
+        if(ImGui::Button("Search"))  StartScan();
+        if(!g_results.empty()) { ImGui::SameLine(); if(ImGui::Button("Rescan")) StartScan(); }
     }
-    else if(strncmp(cmd, "set ", 4) == 0)
+
+    ImGui::Separator();
+
+    // Unknown scan
+    ImGui::TextColored(ImVec4(0.9f,0.9f,0.2f,1), "Unknown Scan:");
+    if(!g_scanning)
     {
-        int idx = 0; float val = 0;
-        sscanf(cmd + 4, "%d %f", &idx, &val);
-        idx--;
-        pthread_mutex_lock(&g_mutex);
-        if(idx >= 0 && idx < (int)g_results.size())
+        if(ImGui::Button("First Scan")) StartScan("first");
+    }
+    if(g_unknownMode && !g_scanning)
+    {
+        ImGui::SameLine(); if(ImGui::Button("Changed"))   StartScan("changed");
+        ImGui::SameLine(); if(ImGui::Button("Unchanged")) StartScan("unchanged");
+        if(ImGui::Button("Increased")) StartScan("increased");
+        ImGui::SameLine(); if(ImGui::Button("Decreased")) StartScan("decreased");
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.4f,1,0.4f,1), "%s", g_statusMsg);
+    ImGui::Separator();
+
+    // Results
+    ImGui::Text("Results (%zu):", g_results.size());
+    ImGui::BeginChild("##res", ImVec2(0,160), true);
+    pthread_mutex_lock(&g_mutex);
+    for(int i = 0; i < (int)g_results.size(); i++)
+    {
+        auto& r = g_results[i];
+        char label[64];
+        if(r.isFloat) snprintf(label, sizeof(label), "[%d] 0x%X = %.3f (float)", i+1, r.addr, r.fval);
+        else          snprintf(label, sizeof(label), "[%d] 0x%X = %d (int)",     i+1, r.addr, r.ival);
+        ImGui::Text("%s", label);
+        ImGui::SameLine();
+        char btnS[16]; snprintf(btnS, sizeof(btnS), "Set##s%d", i);
+        if(ImGui::SmallButton(btnS))
         {
-            auto& r = g_results[idx];
-            if(r.isFloat) *(float*)r.address = val;
-            else          *(int*)r.address   = (int)val;
-            LOGI("Set [%d] 0x%X = %.2f", idx+1, r.address, val);
+            float v = atof(g_searchVal);
+            if(r.isFloat) *(float*)r.addr = v;
+            else          *(int*)r.addr   = (int)v;
         }
-        pthread_mutex_unlock(&g_mutex);
-    }
-    else if(strncmp(cmd, "lock ", 5) == 0)
-    {
-        int idx = 0; float val = 0;
-        sscanf(cmd + 5, "%d %f", &idx, &val);
-        idx--;
-        pthread_mutex_lock(&g_mutex);
-        if(idx >= 0 && idx < (int)g_results.size())
+        ImGui::SameLine();
+        char btnL[16]; snprintf(btnL, sizeof(btnL), "Lock##l%d", i);
+        if(ImGui::SmallButton(btnL))
         {
-            auto& r = g_results[idx];
+            float v = atof(g_searchVal);
             LockEntry lk;
-            lk.address = r.address;
-            lk.fval    = val;
-            lk.ival    = (int)val;
-            lk.isFloat = r.isFloat;
-            lk.active  = true;
+            lk.addr = r.addr; lk.fval = v; lk.ival = (int)v;
+            lk.isFloat = r.isFloat; lk.active = true;
+            lk.label = label;
             g_locks.push_back(lk);
-            LOGI("Locked 0x%X = %.2f", r.address, val);
         }
-        pthread_mutex_unlock(&g_mutex);
     }
-    else if(strncmp(cmd, "unlock ", 7) == 0)
+    pthread_mutex_unlock(&g_mutex);
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    ImGui::Text("Locked (%zu):", g_locks.size());
+    ImGui::BeginChild("##lks", ImVec2(0,90), true);
+    int removeIdx = -1;
+    for(int i = 0; i < (int)g_locks.size(); i++)
     {
-        int idx = 0;
-        sscanf(cmd + 7, "%d", &idx);
-        pthread_mutex_lock(&g_mutex);
-        if(idx >= 0 && idx < (int)g_locks.size())
-            g_locks[idx].active = false;
-        pthread_mutex_unlock(&g_mutex);
+        auto& lk = g_locks[i];
+        ImGui::TextColored(lk.active ? ImVec4(1,0.8f,0.2f,1) : ImVec4(0.5f,0.5f,0.5f,1),
+            "[%d] 0x%X = %s", i+1, lk.addr, lk.active ? "LOCKED" : "OFF");
+        ImGui::SameLine();
+        char btnU[16]; snprintf(btnU, sizeof(btnU), "Unlock##u%d", i);
+        if(ImGui::SmallButton(btnU)) { lk.active = false; removeIdx = i; }
     }
+    if(removeIdx >= 0) g_locks.erase(g_locks.begin() + removeIdx);
+    ImGui::EndChild();
+
+    ImGui::End();
 }
 
-// ── Command watcher ───────────────────────────────────
-void* CmdWatcher(void*)
+// ── EGL hooks ─────────────────────────────────────────
+void (*origEGLSwapBuffers)()  = nullptr;
+void (*origEGLMakeCurrent)()  = nullptr;
+
+void HookedEGLSwapBuffers()
 {
-    char lastCmd[512] = "";
-    while(true)
+    if(!g_imguiInited)
     {
-        FILE* f = fopen(CMD_FILE, "r");
-        if(f)
-        {
-            char cmd[512] = "";
-            fgets(cmd, sizeof(cmd), f);
-            fclose(f);
-
-            int len = strlen(cmd);
-            if(len > 0 && cmd[len-1] == '\n') cmd[len-1] = '\0';
-
-            if(strlen(cmd) > 0 && strcmp(cmd, lastCmd) != 0)
-            {
-                strncpy(lastCmd, cmd, sizeof(lastCmd)-1);
-                ParseCommand(cmd);
-                FILE* fc = fopen(CMD_FILE, "w");
-                if(fc) fclose(fc);
-            }
-        }
-        usleep(200000);
+        if(origEGLSwapBuffers) origEGLSwapBuffers();
+        return;
     }
-    return nullptr;
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui::NewFrame();
+
+    if(g_showWindow) RenderGUI();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    if(origEGLSwapBuffers) origEGLSwapBuffers();
+}
+
+void HookedEGLMakeCurrent()
+{
+    if(origEGLMakeCurrent) origEGLMakeCurrent();
+
+    if(!g_imguiInited)
+    {
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(g_screenW, g_screenH);
+        io.IniFilename = nullptr;
+
+        ImGui::StyleColorsDark();
+        ImGui::GetStyle().ScaleAllSizes(2.5f); // scale untuk mobile
+        io.FontGlobalScale = 2.0f;
+
+        ImGui_ImplOpenGL3_Init("#version 100");
+        g_imguiInited = true;
+        LOGI("ImGui initialized!");
+    }
 }
 
 // ── Entry point ───────────────────────────────────────
@@ -350,13 +383,22 @@ extern "C" __attribute__((visibility("default"))) void OnModLoad()
     aml = (IAML*)GetInterface("AMLInterface");
     if(!aml) return;
 
-    LOGI("MemTool v1.1 loaded!");
+    uintptr_t pGTASA = aml->GetLib("libGTASA.so");
+    if(!pGTASA) return;
 
-    pthread_t t1, t2;
-    pthread_create(&t1, nullptr, CmdWatcher,  nullptr);
-    pthread_create(&t2, nullptr, LockThread,  nullptr);
-    pthread_detach(t1);
-    pthread_detach(t2);
+    LOGI("MemTool v2.0 loaded, base: 0x%X", pGTASA);
 
-    aml->ShowToast(true, "MemTool v1.1 ready!");
+    // hook EGL
+    aml->Hook((void*)(pGTASA + 0x268f4c), (void*)HookedEGLSwapBuffers, (void**)&origEGLSwapBuffers);
+    aml->Hook((void*)(pGTASA + 0x268dd0), (void*)HookedEGLMakeCurrent,  (void**)&origEGLMakeCurrent);
+
+    // hook touch input
+    aml->Hook((void*)(pGTASA + 0x2696b4), (void*)HookedGetNextEvent, (void**)&origGetNextEvent);
+
+    // start lock thread
+    pthread_t t;
+    pthread_create(&t, nullptr, LockThread, nullptr);
+    pthread_detach(t);
+
+    aml->ShowToast(true, "MemTool v2.0 Pure AML!");
 }

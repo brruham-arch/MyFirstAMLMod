@@ -1,35 +1,29 @@
 name: Build AML Mod
-on:
-  push:
-    branches: [ main ]
+on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Android NDK
+      - uses: actions/checkout@v3
+      - name: Setup NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r25c
       - name: Build
         run: |
-          $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang++ \
-            -std=c++17 \
-            -shared \
-            -fPIC \
-            -O2 \
-            -DNDEBUG \
-            -I. \
-            -s \
+          CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang++
+          $CC -std=c++17 -shared -fPIC -O2 -DNDEBUG -s \
+            -DIMGUI_IMPL_OPENGL_ES2 \
+            -I. -Iimgui \
             -o libMyFirstMod.so \
             main.cpp \
-            -llog \
-            -lEGL \
-            -lGLESv2 \
-            -ldl \
-            -static-libstdc++
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+            imgui/imgui.cpp \
+            imgui/imgui_draw.cpp \
+            imgui/imgui_tables.cpp \
+            imgui/imgui_widgets.cpp \
+            imgui/imgui_impl_opengl3.cpp \
+            -llog -lEGL -lGLESv2 -ldl -static-libstdc++
+      - uses: actions/upload-artifact@v3
         with:
           name: libMyFirstMod
           path: libMyFirstMod.so
